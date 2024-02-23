@@ -1,0 +1,133 @@
+----------------ORIGINAL CODE--------------------------------------
+
+SELECT
+a.EMP_NO,
+a.FULLNAME,
+sum(ifnull(TOTAL, 0)) TOTAL_PURCHASED,
+sum(ifnull(TOTAL, 0)) - ifnull(TOTAL_PAID, 0) BALANCE,
+ifnull(TOTAL_PAID, 0) TOTAL_PAID,
+LIMIT_AMOUNT,
+MAX_LIMIT
+from
+(
+    SELECT
+        a.EMP_NO,
+        a.LIMIT_AMOUNT,
+        a.MAX_LIMIT,
+        IFNULL(CONCAT(b.firstname, ' ', b.lastname), '') FULLNAME
+    from
+        PLC_EMPLOYEE_LIMIT_TBL a,
+        (
+            SELECT
+                distinct employee_no,
+                firstname,
+                lastname
+            from
+                hris.view_employee_account_raw
+        ) b
+    where
+        a.EMP_NO = b.employee_no
+        and ACTIVE = 1
+) a
+LEFT JOIN (
+    SELECT 
+        a.ID,
+        a.EMP_NO,
+        CASE 
+            WHEN SIGN(total + IFNULL(b.ADJUST, 0)) = -1 THEN 0
+            WHEN SIGN(total + IFNULL(b.ADJUST, 0)) = 1 THEN total + IFNULL(adjust, 0)
+            ELSE 0
+        END TOTAL
+    from
+        (
+            SELECT
+                A.ID,
+                A.EMP_NO,
+                sum(B.TOTAL) total
+            from
+                PLC_ORDER_TBL A,
+                PLC_ORDER_LIST_TBL B
+            where
+                A.ID = B.ORDER_ID
+                AND A.ACTIVE = 1
+                and A.STATUS = 'Transacted' 
+            group by
+                A.ID,
+                A.EMP_NO
+        ) a 
+        LEFT JOIN (
+            SELECT
+                a.ORDER_ID,
+                SUM(IFNULL(b.AMOUNT, 0)) adjust
+            from
+                PLC_ORDER_LIST_TBL a,
+                PLC_ORDER_ADJUSTMENT_TBL b
+            where
+                a.ID = b.ORDER_LIST_ID
+            GROUP BY
+                a.ORDER_ID
+        ) b ON a.ID = b.ORDER_ID
+) b ON a.EMP_NO = b.EMP_NO
+LEFT JOIN (
+    SELECT
+        IFNULL(sum(TOTAL_PAID), 0) TOTAL_PAID,
+        EMP_NO
+    from
+        PLC_CUTOFF_RECORD_TBL
+    group by
+        EMP_NO
+) c ON a.EMP_NO = c.EMP_NO
+group by
+a.EMP_NO,
+FULLNAME,
+LIMIT_AMOUNT,
+MAX_LIMIT
+order by
+a.EMP_NO asc
+
+-------------------------------------UPDATED CODE--------------------------------------
+
+
+SELECT
+a.EMP_NO,
+CONCAT(b.firstname, ' ', b.lastname) AS FULLNAME,
+COALESCE(SUM(OL.TOTAL), 0) AS TOTAL_PURCHASED,
+COALESCE(SUM(OL.TOTAL), 0) - COALESCE(CR.TOTAL_PAID, 0) AS BALANCE,
+COALESCE(CR.TOTAL_PAID, 0) AS TOTAL_PAID,
+a.LIMIT_AMOUNT,
+a.MAX_LIMIT
+FROM
+PLC_EMPLOYEE_LIMIT_TBL a
+JOIN
+hris.view_employee_account_raw b ON a.EMP_NO = b.employee_no
+LEFT JOIN (
+SELECT
+    A.EMP_NO,
+    SUM(B.TOTAL) AS TOTAL
+FROM
+    PLC_ORDER_TBL A
+JOIN
+    PLC_ORDER_LIST_TBL B ON A.ID = B.ORDER_ID
+WHERE
+    A.ACTIVE = 1 AND A.STATUS = 'Transacted'
+GROUP BY
+    A.EMP_NO  
+) OL ON a.EMP_NO = OL.EMP_NO
+LEFT JOIN (
+SELECT
+    EMP_NO,
+    SUM(TOTAL_PAID) AS TOTAL_PAID
+FROM
+    PLC_CUTOFF_RECORD_TBL
+GROUP BY
+    EMP_NO
+) CR ON a.EMP_NO = CR.EMP_NO
+WHERE
+a.ACTIVE = 1
+GROUP BY
+a.EMP_NO,
+FULLNAME,
+a.LIMIT_AMOUNT,
+a.MAX_LIMIT
+ORDER BY
+a.EMP_NO ASC;
